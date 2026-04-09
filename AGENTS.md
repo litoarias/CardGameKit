@@ -1,36 +1,36 @@
 # AGENTS.md — CardGameKit
 
-## Contexto
+## Context
 
-Este package es la capa visual completa para juegos de baraja española. La app solo aporta reglas. Lee `Sources/CardGameKit/Protocols/` para entender los contratos antes de tocar nada.
-
----
-
-## Para implementar un juego nuevo
-
-1. **Crea los tipos de dominio** en la app (fase, acción, resultado, jugador) y confórmalos a los protocolos del package.
-
-2. **Crea el engine** conformando `CardGameEngine`. Los nombres de los métodos mutantes del protocol (`executeDecision`, `executeDiscard`, `executeAction`, `newHand`) pueden ser wrappers de los métodos internos del engine — no hace falta renombrar nada, solo añadir la conformance en extensión.
-
-3. **Crea el punto de entrada** con `CardTableView<TuEngine>(engineFactory:botDecider:humanName:bubbleProvider:)`. El `botDecider` es una closure que recibe un snapshot del engine y el asiento, y devuelve `BotMove<Action>`.
-
-4. **Añade el package al `.xcodeproj`** como local package dependency con `relativePath = Packages/CardGameKit`. Ver `Ordago.xcodeproj/project.pbxproj` como referencia exacta de los bloques necesarios.
+This package is the complete visual layer for Spanish deck card games. The app only provides the rules. Read `Sources/CardGameKit/Protocols/` to understand the contracts before touching anything.
 
 ---
 
-## Reglas que no son obvias en el código
+## Implementing a new game
 
-- `Seat.bottom` es **siempre** el humano. El `botDecider` nunca recibe `.bottom`.
-- `Rank` en el package no tiene ordenación ni valores de juego. Añádelos por extensión en la app.
-- `Seat` no tiene propiedad `team`. Cada juego la define por extensión.
-- Las imágenes de la baraja se cargan de `Bundle.module` — no copies assets a la app.
-- `cornerRadius` de `SpanishCardImage` debe pasarse como `cardWidth * 0.06` para que escale bien en iPad.
-- El `botDecider` closure **no** debe referenciar `BotStrategy` ni tipos internos del engine directamente — debe ser autocontenido o delegar a una función libre.
+1. **Create your domain types** in the app (phase, action, result, player) and conform them to the package protocols.
+
+2. **Create the engine** by conforming to `CardGameEngine`. The mutating protocol methods (`executeDecision`, `executeDiscard`, `executeAction`, `newHand`) can be wrappers around your engine's internal methods — no need to rename anything, just add the conformance in an extension.
+
+3. **Create the entry point** with `CardTableView<YourEngine>(engineFactory:botDecider:humanName:bubbleProvider:)`. The `botDecider` is a closure that receives an engine snapshot and a seat, and returns `BotMove<Action>`.
+
+4. **Add the package to `.xcodeproj`** as a local package dependency with `relativePath = Packages/CardGameKit`. See `Ordago.xcodeproj/project.pbxproj` for the exact blocks needed.
 
 ---
 
-## Qué NO tocar en el package
+## Non-obvious rules
 
-- No añadir lógica de ningún juego concreto a ningún archivo bajo `Sources/CardGameKit/`.
-- No añadir propiedades a `Rank`, `Seat`, `Card` o `Deck` que sean específicas de un juego.
-- No cambiar la firma de ningún protocolo sin actualizar **todas** las conformances existentes (empezando por `MusEngine`, `GamePhase`, `BetAction`, `LanceResult`, `Player` en Ordago).
+- `Seat.bottom` is **always** the human player. The `botDecider` never receives `.bottom`.
+- `Rank` in the package has no ordering or game values. Add them via extension in the app.
+- `Seat` has no `team` property. Each game defines it via extension.
+- Card images are loaded from `Bundle.module` — do not copy assets to the app target.
+- `cornerRadius` in `SpanishCardImage` should be passed as `cardWidth * 0.06` so it scales correctly on iPad.
+- The `botDecider` closure should **not** reference `BotStrategy` or internal engine types directly — it must be self-contained or delegate to a free function.
+
+---
+
+## What NOT to touch in the package
+
+- Do not add game-specific logic to any file under `Sources/CardGameKit/`.
+- Do not add game-specific properties to `Rank`, `Seat`, `Card` or `Deck`.
+- Do not change any protocol signature without updating **all** existing conformances (starting with `MusEngine`, `GamePhase`, `BetAction`, `LanceResult`, `Player` in Ordago).
