@@ -24,7 +24,9 @@ Everything is driven by `CardTableViewModel`. You just conform your game's types
 ## Requirements
 
 - iOS 18+ / macOS 15+
-- Swift 6
+- Swift 6 with strict concurrency
+
+No third-party dependencies. Apple frameworks only.
 
 ---
 
@@ -83,6 +85,8 @@ That's it. The package handles everything else.
 ## Card assets
 
 40 cards in `Cards.xcassets`, named `{rank}_{suit}` — e.g. `1_oros`, `sota_copas`, `rey_espadas` — plus `reverso`. Loaded via `Bundle.module`, no need to copy anything to your app target.
+
+Card images sourced from [Wikimedia Commons](https://commons.wikimedia.org/wiki/Category:Spanish_playing_cards), available under Creative Commons licensing.
 
 ---
 
