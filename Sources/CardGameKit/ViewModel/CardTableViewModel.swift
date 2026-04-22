@@ -22,6 +22,8 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     public private(set) var thinkingSeat: Seat? = nil
     public private(set) var lastBotAction: String? = nil
     public private(set) var animationTrigger: Int = 0
+    /// Incremented externally to force the action bar to re-evaluate legalActions().
+    public var actionBarRefreshID: Int = 0
 
     // MARK: - Deal animation state
 
@@ -40,6 +42,14 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     public private(set) var summaryScoreAway: Int = 0
     private var summaryContinuation: CheckedContinuation<Void, Never>?
 
+    // MARK: - Game over overlay
+
+    public private(set) var showGameOver: Bool = false
+    public private(set) var gameOverHomeScore: Int = 0
+    public private(set) var gameOverAwayScore: Int = 0
+    /// Accumulates results per hand across the whole game for the end summary.
+    public private(set) var gameHistory: [[Engine.Result]] = []
+
     // MARK: - Human timer
 
     public private(set) var humanTimerActive: Bool = false
@@ -50,10 +60,18 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     // MARK: - Drive task (stored to allow cancellation)
 
     private var driveTask: Task<Void, Never>?
+    /// True once the initial deal + driveLoop has been kicked off.
+    private var started = false
 
     // MARK: - Human interaction state
 
     public var selectedDiscardIndices: Set<Int> = []
+    /// Indices of cards visually "lifted" for bot discard preview.
+    public private(set) var botDiscardIndices: [Seat: Set<Int>] = [:]
+    /// Card indices currently animating back to the deck (discard return phase).
+    public private(set) var returningToDeck: [Seat: Set<Int>] = [:]
+    /// Card indices hidden (not yet re-dealt) after a discard swap.
+    public private(set) var hiddenAfterDiscard: [Seat: Set<Int>] = [:]
     public var humanName: String
 
     // MARK: - Particles
@@ -70,7 +88,7 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         engineFactory: @escaping @MainActor () -> Engine,
         botDecider: @escaping @MainActor (Seat, Engine) async -> BotMove<Engine.Action>,
         humanName: String = "Jugador",
-        turnTimerDuration: TimeInterval = 10,
+        turnTimerDuration: TimeInterval = 22,
         botThinkDuration: TimeInterval = 0.7,
         bubbleProvider: (@MainActor (Seat, Engine) -> String?)? = nil
     ) {
@@ -85,8 +103,13 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
 
     // MARK: - Human actions
 
+    /// Prevents double-tap from firing duplicate actions.
+    private var processingAction = false
+
     public func humanDecision(_ agrees: Bool) {
-        guard !isDealing else { return }
+        guard !isDealing, !processingAction else { return }
+        processingAction = true
+        defer { processingAction = false }
         stopHumanTimer()
         engine.executeDecision(seat: .bottom, agrees: agrees)
         animationTrigger += 1
@@ -94,16 +117,24 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     }
 
     public func humanConfirmDiscard() {
-        guard !isDealing else { return }
+        guard !isDealing, !processingAction else { return }
+        processingAction = true
         stopHumanTimer()
-        guard !selectedDiscardIndices.isEmpty else { return }
-        engine.executeDiscard(seat: .bottom, indices: selectedDiscardIndices)
+        let indices = selectedDiscardIndices
         selectedDiscardIndices = []
-        scheduleDriveLoop()
+        driveTask?.cancel()
+        driveTask = Task { [weak self] in
+            guard let self else { return }
+            await animateDiscardSequence(seat: .bottom, indices: indices)
+            processingAction = false
+            await driveLoop()
+        }
     }
 
     public func humanExecute(_ action: Engine.Action) {
-        guard !isDealing else { return }
+        guard !isDealing, !processingAction else { return }
+        processingAction = true
+        defer { processingAction = false }
         stopHumanTimer()
         engine.executeAction(action)
         animationTrigger += 1
@@ -121,6 +152,28 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         summaryContinuation = nil
     }
 
+    /// Hides the round summary overlay without advancing to the next hand.
+    public func dismissSummaryOverlay() {
+        showRoundSummary = false
+    }
+
+    /// Called by an external trigger (e.g. multiplayer host advancing) to dismiss
+    /// whatever blocking overlay is active (summary or game-over).
+    public func externalResume() {
+        if showGameOver {
+            dismissGameOver()
+        } else {
+            // Always resume the hand-end continuation — the driveLoop blocks on
+            // it regardless of whether the summary overlay is visible.
+            continuarDesdeSummary()
+        }
+    }
+
+    public func dismissGameOver() {
+        showGameOver = false
+        newGame()
+    }
+
     public func newGame() {
         stopHumanTimer()
         engine = engineFactory()
@@ -131,6 +184,11 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         dealRevealedCount = 0
         isDealing = true
         selectedDiscardIndices = []
+        botDiscardIndices = [:]
+        returningToDeck = [:]
+        hiddenAfterDiscard = [:]
+        gameHistory = []
+        showGameOver = false
         driveTask?.cancel()
         driveTask = Task { [weak self] in
             guard let self else { return }
@@ -157,11 +215,18 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         loop: while true {
             switch engine.phase.kind {
             case .gameOver:
+                gameOverHomeScore = engine.scores[.home] ?? 0
+                gameOverAwayScore = engine.scores[.away] ?? 0
+                showGameOver = true
                 break loop
 
             case .handEnd:
                 spawnParticlesForResults()
                 summaryResults = engine.roundResults
+                // Accumulate hand results for the end-of-game summary
+                if !engine.roundResults.isEmpty {
+                    gameHistory.append(engine.roundResults)
+                }
                 summaryScoreHome = engine.scores[.home] ?? 0
                 summaryScoreAway = engine.scores[.away] ?? 0
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
@@ -172,17 +237,35 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
                 return
 
             case .discard:
-                await processBotDiscards()
-                if engine.phase.kind == .discard {
+                // Process discards in turn order from mano.
+                // When it's the human's turn, break and wait for input.
+                let result = await processDiscardsInOrder()
+                if result == .waitingForHuman {
                     startHumanTimer()
                     break loop
                 }
+                // All discarded — phase will transition, continue loop
                 continue loop
 
-            case .decision, .bet:
+            case .decision:
+                if isHumanTurn {
+                    startHumanTimer()
+                    break loop
+                }
+                isThinking = true
+                thinkingSeat = engine.turnSeat
+                try? await Task.sleep(for: .milliseconds(randomBotDelay(for: engine.phase.kind)))
+                await processBotTurn()
+                thinkingSeat = nil
+                isThinking = false
+                animationTrigger += 1
+
+            case .bet:
+                // Settle the deck off-screen once betting/lances begin
+                settleDeck()
                 // Auto-advance phases with no interaction (e.g. skipped lance)
                 if engine.phaseRequiresAutoAdvance {
-                    try? await Task.sleep(for: .milliseconds(1200))
+                    try? await Task.sleep(for: .milliseconds(3500))
                     engine.autoAdvancePhase()
                     animationTrigger += 1
                     continue loop
@@ -202,25 +285,129 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         }
     }
 
+    // MARK: - Discard coordination
+
+    private enum DiscardResult { case waitingForHuman, allDone }
+
+    /// Process discards in turn order from mano. Returns `.waitingForHuman` when
+    /// it's the human's turn to discard, `.allDone` when all players have discarded.
+    private func processDiscardsInOrder() async -> DiscardResult {
+        // Build turn order starting from mano
+        var order: [Seat] = []
+        var s = engine.manoSeat
+        for _ in 0..<4 { order.append(s); s = s.next }
+
+        for seat in order {
+            guard engine.phase.kind == .discard else { return .allDone }
+            guard engine.pendingDiscardSeats.contains(seat) else { continue }
+            if seat == .bottom { return .waitingForHuman }
+            // Bot discard with lift preview then card-by-card animation
+            isThinking = true
+            thinkingSeat = seat
+            let move = await botDecider(seat, engine)
+            guard case .discard(let indices) = move else {
+                thinkingSeat = nil; isThinking = false; continue
+            }
+            // Lift preview
+            botDiscardIndices[seat] = indices
+            animationTrigger += 1
+            try? await Task.sleep(for: .milliseconds(600))
+            botDiscardIndices[seat] = nil
+
+            let player = engine.player(at: seat)
+            lastBotAction = "\(player.name) descarta \(indices.count)"
+
+            // Animated discard sequence (return → swap → deal)
+            await animateDiscardSequence(seat: seat, indices: indices)
+
+            animationTrigger += 1
+            thinkingSeat = nil
+            isThinking = false
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return .allDone
+    }
+
+    // MARK: - Discard animation (card-by-card)
+
+    /// Animates a discard sequence for one seat:
+    /// 1. Return discarded cards to the deck one by one
+    /// 2. Execute the engine discard (swap cards)
+    /// 3. Deal new cards back one by one
+    private func animateDiscardSequence(seat: Seat, indices: Set<Int>) async {
+        guard !indices.isEmpty else {
+            engine.executeDiscard(seat: seat, indices: indices)
+            return
+        }
+        let sorted = indices.sorted()
+
+        // Phase 1: Return cards to deck one by one
+        for idx in sorted {
+            withAnimation(.spring(duration: 0.35, bounce: 0.12)) {
+                if returningToDeck[seat] == nil { returningToDeck[seat] = [] }
+                returningToDeck[seat]?.insert(idx)
+            }
+            try? await Task.sleep(for: .milliseconds(180))
+        }
+        try? await Task.sleep(for: .milliseconds(120))
+
+        // Phase 2: Swap cards in the engine, but hide new cards
+        hiddenAfterDiscard[seat] = indices
+        returningToDeck[seat] = nil
+        engine.executeDiscard(seat: seat, indices: indices)
+        animationTrigger += 1
+
+        // Phase 3: Deal new cards back one by one
+        try? await Task.sleep(for: .milliseconds(180))
+        for idx in sorted {
+            withAnimation(.spring(duration: 0.45, bounce: 0.25)) {
+                hiddenAfterDiscard[seat]?.remove(idx)
+            }
+            try? await Task.sleep(for: .milliseconds(160))
+        }
+        hiddenAfterDiscard[seat] = nil
+    }
+
     // MARK: - Bot coordination
 
     private func processBotDiscards() async {
-        let botSeats: [Seat] = [.right, .top, .left]
+        // Process bots in turn order from mano (next seats after mano)
+        let botSeats: [Seat] = {
+            var seats: [Seat] = []
+            var s = engine.manoSeat
+            for _ in 0..<4 {
+                if s != .bottom { seats.append(s) }
+                s = s.next
+            }
+            return seats
+        }()
         for seat in botSeats {
             guard engine.phase.kind == .discard else { return }
             guard engine.pendingDiscardSeats.contains(seat) else { continue }
             isThinking = true
             thinkingSeat = seat
-            try? await Task.sleep(for: .milliseconds(randomBotDelay(for: .discard)))
+            // Decide which cards to discard
             let move = await botDecider(seat, engine)
-            let player = engine.player(at: seat)
-            if case .discard(let indices) = move {
-                lastBotAction = "\(player.name) descarta \(indices.count)"
-                engine.executeDiscard(seat: seat, indices: indices)
-                animationTrigger += 1
+            guard case .discard(let indices) = move else {
+                thinkingSeat = nil
+                isThinking = false
+                continue
             }
+            // Visually lift selected cards
+            botDiscardIndices[seat] = indices
+            animationTrigger += 1
+            // Hold the lift animation so the user can see it
+            try? await Task.sleep(for: .milliseconds(900))
+            // Execute the discard
+            let player = engine.player(at: seat)
+            lastBotAction = "\(player.name) descarta \(indices.count)"
+            botDiscardIndices[seat] = nil
+            engine.executeDiscard(seat: seat, indices: indices)
+            animationTrigger += 1
             thinkingSeat = nil
             isThinking = false
+            // Brief pause between bots so the user can follow the sequence
+            try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
@@ -268,7 +455,6 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         case .decision:
             humanDecision(true)
         case .discard:
-            if selectedDiscardIndices.isEmpty { selectedDiscardIndices = [0] }
             humanConfirmDiscard()
         case .bet:
             let actions = engine.legalActions()
@@ -276,6 +462,18 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         default:
             break
         }
+    }
+
+    // MARK: - Start (idempotent)
+
+    /// Kicks off the initial deal animation + drive loop exactly once.
+    /// Safe to call multiple times (e.g. from SwiftUI `.task` on a view that
+    /// might be recreated) — subsequent calls are no-ops.
+    public func startIfNeeded() async {
+        guard !started else { return }
+        started = true
+        await animateDeal()
+        await driveLoop()
     }
 
     // MARK: - Deal animation
@@ -296,6 +494,19 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         isDealing = false
         deckRotation = Double.random(in: -60...60)
         deckLayerRotations = (0..<5).map { _ in Double.random(in: -6...6) }
+        // Keep the deck visible at the centre during decision/discard phases
+        // (e.g. Mus rounds). It will be settled off-screen when betting begins.
+        let shouldSettle = engine.phase.kind != .decision && engine.phase.kind != .discard
+        if shouldSettle {
+            withAnimation(.spring(duration: 0.7, bounce: 0.2)) {
+                deckSettled = true
+            }
+        }
+    }
+
+    /// Hides the deck pile by animating it off-screen to the mano corner.
+    public func settleDeck() {
+        guard !deckSettled else { return }
         withAnimation(.spring(duration: 0.7, bounce: 0.2)) {
             deckSettled = true
         }
@@ -317,6 +528,9 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     private func startNewHand() {
         stopHumanTimer()
         engine.newHand()
+        botDiscardIndices = [:]
+        returningToDeck = [:]
+        hiddenAfterDiscard = [:]
         dealAnimationID += 1
         dealRevealedCount = 0
         isDealing = true
@@ -355,19 +569,16 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     // MARK: - Bot timing
 
     /// Random thinking delay that varies by phase to feel human.
-    /// - Decision (mus/corto): quick read of situation, 0.5 – 1.4 s
-    /// - Bet: weighing risk and bluff, 0.9 – 2.6 s
-    /// - Discard: studying hand, 0.6 – 1.8 s
-    /// Occasionally a much longer "hesitation" pause occurs (~10 % of the time).
+    /// Kept short (0.5–1.5 s) so games feel snappy; the engine-level
+    /// bot strategy adds its own delay on top.
     private func randomBotDelay(for phase: PhaseKind) -> Int {
-        let hesitate = Int.random(in: 1...10) == 1  // 10 % chance of a longer pause
         switch phase {
         case .decision:
-            return hesitate ? Int.random(in: 1800...3000) : Int.random(in: 500...1400)
+            return Int.random(in: 500...1000)
         case .bet:
-            return hesitate ? Int.random(in: 2600...4200) : Int.random(in: 900...2600)
+            return Int.random(in: 600...1200)
         default:  // discard, etc.
-            return hesitate ? Int.random(in: 1400...2400) : Int.random(in: 600...1800)
+            return Int.random(in: 500...1000)
         }
     }
 
