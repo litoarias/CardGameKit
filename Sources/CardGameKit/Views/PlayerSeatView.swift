@@ -20,6 +20,12 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
     var timerDuration: TimeInterval = 0.7
     /// Color representing the player's team (home = blue, away = orange by convention).
     var teamColor: Color = .blue
+    /// Indices of cards visually "lifted" (bot discard preview). Empty by default.
+    var liftedIndices: Set<Int> = []
+    /// Indices of cards animating back to the deck (discard return phase).
+    var returningIndices: Set<Int> = []
+    /// Indices of cards hidden (not yet re-dealt) after a discard swap.
+    var hiddenIndices: Set<Int> = []
 
     public init(
         player: Player,
@@ -37,7 +43,10 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
         deckOffset: CGSize = .zero,
         timerActive: Bool = false,
         timerDuration: TimeInterval = 0.7,
-        teamColor: Color = .blue
+        teamColor: Color = .blue,
+        liftedIndices: Set<Int> = [],
+        returningIndices: Set<Int> = [],
+        hiddenIndices: Set<Int> = []
     ) {
         self.player = player
         self.revealCards = revealCards
@@ -55,6 +64,9 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
         self.timerActive = timerActive
         self.timerDuration = timerDuration
         self.teamColor = teamColor
+        self.liftedIndices = liftedIndices
+        self.returningIndices = returningIndices
+        self.hiddenIndices = hiddenIndices
     }
 
     public var body: some View {
@@ -77,16 +89,16 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
         case .right:
             VStack(spacing: 4) {
                 fanCards
-                    .overlay(alignment: .trailing) {
-                        bubbleView.offset(x: bubbleOutwardOffset)
+                    .overlay(alignment: .top) {
+                        bubbleView.offset(y: -bubbleOutwardOffset)
                     }
                 playerBadge
             }
         case .left:
             VStack(spacing: 4) {
                 fanCards
-                    .overlay(alignment: .leading) {
-                        bubbleView.offset(x: -bubbleOutwardOffset)
+                    .overlay(alignment: .top) {
+                        bubbleView.offset(y: -bubbleOutwardOffset)
                     }
                 playerBadge
             }
@@ -101,22 +113,31 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
         }
     }
 
-    private var bubbleOutwardOffset: CGFloat { 16 }
+    private var bubbleOutwardOffset: CGFloat { max(22, cardWidth * 0.4) }
 
     // MARK: - Speech bubble
 
     @ViewBuilder
     private var bubbleView: some View {
         if let bubbleText, !bubbleText.isEmpty {
+            let config = bubbleConfig(for: bubbleText)
             Text(bubbleText)
-                .font(.callout.bold())
-                .foregroundStyle(.black)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(Capsule().fill(.white))
-                .overlay(Capsule().stroke(.gray.opacity(0.3), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-                .transition(.scale.combined(with: .opacity))
+                .font(.system(size: bubbleFontSize, weight: .bold))
+                .foregroundStyle(config.fg)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Capsule().fill(config.bg))
+                .overlay(Capsule().stroke(config.border, lineWidth: 1.5))
+                .shadow(color: config.bg.opacity(0.55), radius: 8, y: 3)
+                .transition(.scale(scale: 0.7).combined(with: .opacity))
+                .animation(.spring(duration: 0.25, bounce: 0.3), value: bubbleText)
         }
+    }
+
+    private var bubbleFontSize: CGFloat { max(15, cardWidth * 0.28) }
+
+    private func bubbleConfig(for text: String) -> SpeechBubbleConfig {
+        SpeechBubbleConfig.resolve(for: text)
     }
 
     // MARK: - Card fan
@@ -153,23 +174,31 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
                 let xOff = fanGeo.xOffset(at: idx, of: count, cardWidth: cardWidth)
                 let order = idx * 4 + seatDealOffset
                 let dealt = order < dealRevealedCount
+                let lifted = liftedIndices.contains(idx)
+                let returning = returningIndices.contains(idx)
+                let hidden = hiddenIndices.contains(idx)
+                let visible = dealt && !returning && !hidden
 
-                SpanishCardImage(card: card, faceDown: dealt ? !revealCards : true,
+                SpanishCardImage(card: card, faceDown: visible ? !revealCards : true,
                                  cornerRadius: cardWidth * 0.06)
                     .frame(width: cardWidth)
-                    .rotationEffect(.degrees(dealt ? angle : 0), anchor: .bottom)
-                    .scaleEffect(dealt ? 1.0 : 0.35)
+                    .rotationEffect(.degrees(visible ? angle : 0), anchor: .bottom)
+                    .scaleEffect(visible ? (lifted ? 1.08 : 1.0) : 0.35)
                     .offset(
-                        x: dealt ? xOff : corrected.width,
-                        y: dealt ? fanGeo.yOffset(at: idx, of: count) : corrected.height
+                        x: visible ? xOff : corrected.width,
+                        y: visible
+                            ? (lifted ? fanGeo.yOffset(at: idx, of: count) - 20 : fanGeo.yOffset(at: idx, of: count))
+                            : corrected.height
                     )
-                    .opacity(dealt ? 1 : 0)
-                    .zIndex(dealt ? Double(idx) : -1)
+                    .opacity(visible ? 1 : 0)
+                    .zIndex(lifted ? 10 : (visible ? Double(idx) : -1))
+                    .shadow(color: lifted ? .white.opacity(0.5) : .clear, radius: 6)
                     .matchedGeometryEffect(
                         id: "\(player.id)-\(idx)-\(dealAnimationID)",
                         in: namespace
                     )
                     .transition(.scale(scale: 0.25).combined(with: .opacity))
+                    .animation(.spring(duration: 0.25), value: lifted)
             }
         }
         .animation(.spring(duration: 0.38, bounce: 0.18), value: cards.map(\.id))
@@ -190,8 +219,8 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
 
     private var badgeIconSize: CGFloat { max(12, cardWidth * 0.25) }
     private var badgeCirclePad: CGFloat { max(3, cardWidth * 0.07) }
-    private var manoIconSize: CGFloat { max(7, cardWidth * 0.12) }
-    private var manoOffset: CGFloat { max(3, cardWidth * 0.07) }
+    private var manoEmojiSize: CGFloat { max(20, cardWidth * 0.45) }
+    private var manoOffset: CGFloat { max(14, cardWidth * 0.32) }
 
     @State private var pulseProgress: Double = 0
 
@@ -215,25 +244,31 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
                     }
                     // ── Active player indicator ───────────────────────────
                     .overlay {
-                        // Solid white border — always visible when active
+                        // Bright colored ring — always visible when active
                         Circle()
-                            .stroke(Color.white, lineWidth: 2.5)
+                            .stroke(Color.yellow, lineWidth: 3)
+                            .padding(-5)
+                            .opacity(isCurrent ? 1.0 : 0.0)
+                            .animation(.easeInOut(duration: 0.20), value: isCurrent)
+
+                        // Glow behind the ring
+                        Circle()
+                            .stroke(Color.yellow.opacity(0.5), lineWidth: 6)
+                            .blur(radius: 4)
                             .padding(-5)
                             .opacity(isCurrent ? 1.0 : 0.0)
                             .animation(.easeInOut(duration: 0.20), value: isCurrent)
 
                         // Sonar pulse — expands and fades outward
                         Circle()
-                            .stroke(Color.white.opacity((1 - pulseProgress) * 0.70), lineWidth: 2)
+                            .stroke(Color.yellow.opacity((1 - pulseProgress) * 0.70), lineWidth: 2.5)
                             .scaleEffect(1.0 + pulseProgress * 1.60)
                             .padding(-5)
                     }
                 if isMano {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.system(size: manoIconSize, weight: .bold))
-                        .foregroundStyle(.black)
-                        .padding(2)
-                        .background(Circle().fill(Color.yellow))
+                    Text("\u{270B}")
+                        .font(.system(size: manoEmojiSize))
+                        .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
                         .offset(x: manoOffset, y: -manoOffset)
                 }
             }
@@ -248,14 +283,13 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
                 )
                 .animation(.easeInOut(duration: 0.20), value: isCurrent)
         }
-        .scaleEffect(isCurrent ? 1.1 : 1.0)
+        .scaleEffect(isCurrent ? 1.15 : 1.0)
         .animation(.spring(duration: 0.3), value: isCurrent)
         .task(id: isCurrent) {
             guard isCurrent else {
                 withAnimation(.none) { pulseProgress = 0.0 }
                 return
             }
-            // Sonar sweep loop: expand ring from badge edge, fade to invisible, reset instantly
             while !Task.isCancelled {
                 withAnimation(.easeOut(duration: 0.90)) { pulseProgress = 1.0 }
                 try? await Task.sleep(for: .seconds(1.20))
