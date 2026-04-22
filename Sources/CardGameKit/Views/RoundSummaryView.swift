@@ -9,7 +9,7 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     let homeTeamName: String
     let awayTeamName: String
     let winningScore: Int
-    let onContinue: () -> Void
+    let onDismiss: () -> Void
 
     public init(
         results: [Result],
@@ -18,7 +18,7 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
         homeTeamName: String,
         awayTeamName: String,
         winningScore: Int,
-        onContinue: @escaping () -> Void
+        onDismiss: @escaping () -> Void
     ) {
         self.results = results
         self.scoreHome = scoreHome
@@ -26,12 +26,12 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
         self.homeTeamName = homeTeamName
         self.awayTeamName = awayTeamName
         self.winningScore = winningScore
-        self.onContinue = onContinue
+        self.onDismiss = onDismiss
     }
 
     @State private var appeared = false
     @Environment(\.horizontalSizeClass) private var sizeClass
-    private var scale: CGFloat { sizeClass == .regular ? 1.4 : 1.0 }
+    private var scale: CGFloat { sizeClass == .regular ? 1.08 : 1.0 }
 
     private var totalHome: Int {
         results.filter { $0.winner == .home }.reduce(0) { acc, r in acc + r.totalPoints }
@@ -44,21 +44,43 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
         ZStack {
             Color.black.opacity(0.55).ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                headerSection
-                Divider().overlay(.white.opacity(0.10))
-                resultRows
-                Divider().overlay(.white.opacity(0.10))
-                totalsSection
-                Divider().overlay(.white.opacity(0.10))
-                continueButton
+            GeometryReader { geo in
+                let horizontalInset: CGFloat = sizeClass == .regular ? 64 : 24
+                let panelW = min(geo.size.width - (horizontalInset * 2), sizeClass == .regular ? 760 : 600)
+                let safeTop = geo.safeAreaInsets.top
+                let safeBottom = geo.safeAreaInsets.bottom
+                let verticalInset: CGFloat = sizeClass == .regular ? 28 : 20
+                let usableH = geo.size.height - safeTop - safeBottom
+                let panelMaxH = min(usableH - (verticalInset * 2), geo.size.height * (sizeClass == .regular ? 0.76 : 0.82))
+
+                VStack(spacing: 0) {
+                    headerSection
+                    Divider().overlay(.white.opacity(0.10))
+
+                    // Scrollable middle — handles overflow when there are many results
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            resultRows
+                            Divider().overlay(.white.opacity(0.10))
+                            totalsSection
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+
+                    Divider().overlay(.white.opacity(0.10))
+                    continueButton
+                }
+                .background(cardBackground)
+                .frame(width: panelW)
+                .frame(maxHeight: panelMaxH)
+                .scaleEffect(appeared ? 1 : 0.93)
+                .opacity(appeared ? 1 : 0)
+                .animation(.spring(duration: 0.4, bounce: 0.12), value: appeared)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(.horizontal, horizontalInset)
+                .padding(.top, safeTop + verticalInset)
+                .padding(.bottom, safeBottom + verticalInset)
             }
-            .background(cardBackground)
-            .frame(maxWidth: 600)
-            .padding(.horizontal, 28)
-            .scaleEffect(appeared ? 1 : 0.93)
-            .opacity(appeared ? 1 : 0)
-            .animation(.spring(duration: 0.4, bounce: 0.12), value: appeared)
         }
         .onAppear { appeared = true }
     }
@@ -189,11 +211,11 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     // MARK: - Continue button
 
     private var continueButton: some View {
-        Button(action: onContinue) {
-            Text("Continuar")
-                .font(.system(size: 17 * scale, weight: .semibold)).foregroundStyle(.black)
+        Button(action: onDismiss) {
+            Text("Cerrar")
+                .font(.system(size: 17 * scale, weight: .semibold)).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).padding(.vertical, 14 * scale)
-                .background(RoundedRectangle(cornerRadius: 14 * scale).fill(.white))
+                .background(RoundedRectangle(cornerRadius: 14 * scale).fill(.white.opacity(0.18)))
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 20 * scale).padding(.vertical, 16 * scale)

@@ -2,18 +2,25 @@ import SwiftUI
 
 /// Action button bar for the human player.
 /// Generic over any `CardGameEngine` — drives layout from `PhaseKind`.
+/// In landscape the caller passes `vertical: true` to stack buttons in a column.
 public struct ActionBarView<Engine: CardGameEngine>: View {
     @Bindable var vm: CardTableViewModel<Engine>
+    var vertical: Bool = false
 
-    public init(vm: CardTableViewModel<Engine>) {
+    public init(vm: CardTableViewModel<Engine>, vertical: Bool = false) {
         self.vm = vm
+        self.vertical = vertical
+    }
+
+    private var layout: AnyLayout {
+        vertical ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
     }
 
     public var body: some View {
         Group {
             switch vm.engine.phase.kind {
             case .decision where vm.isHumanTurn:
-                HStack(spacing: 12) {
+                layout {
                     actionButton(Engine.decisionLabels.agree, color: .green) {
                         vm.humanDecision(true)
                     }
@@ -23,17 +30,22 @@ public struct ActionBarView<Engine: CardGameEngine>: View {
                 }
 
             case .discard where vm.engine.pendingDiscardSeats.contains(.bottom):
-                HStack(spacing: 12) {
-                    actionButton("Descartar (\(vm.selectedDiscardIndices.count))", color: .green) {
-                        vm.humanConfirmDiscard()
+                layout {
+                    if vm.selectedDiscardIndices.isEmpty {
+                        actionButton("Paso", color: .orange) {
+                            vm.humanConfirmDiscard()
+                        }
+                    } else {
+                        actionButton("Descartar (\(vm.selectedDiscardIndices.count))", color: .green) {
+                            vm.humanConfirmDiscard()
+                        }
                     }
-                    .disabled(vm.selectedDiscardIndices.isEmpty)
-                    .opacity(vm.selectedDiscardIndices.isEmpty ? 0.5 : 1.0)
                 }
 
             case .bet where vm.isHumanTurn:
+                let _ = vm.actionBarRefreshID  // track so buttons re-render when stepper changes
                 let actions = vm.engine.legalActions()
-                HStack(spacing: 10) {
+                layout {
                     ForEach(actions, id: \.self) { action in
                         actionButton(action.displayText, color: action.buttonColor) {
                             vm.humanExecute(action)
@@ -42,7 +54,7 @@ public struct ActionBarView<Engine: CardGameEngine>: View {
                 }
 
             case .handEnd:
-                HStack(spacing: 12) {
+                layout {
                     actionButton("Ver resumen", color: .white.opacity(0.18)) {
                         vm.mostrarResumen()
                     }
@@ -52,7 +64,7 @@ public struct ActionBarView<Engine: CardGameEngine>: View {
                 }
 
             case .gameOver:
-                HStack(spacing: 12) {
+                layout {
                     actionButton("Nueva partida", color: .green) {
                         vm.newGame()
                     }
