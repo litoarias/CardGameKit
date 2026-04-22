@@ -1,7 +1,8 @@
 import Foundation
 
 /// A player as visible to the visual layer.
-public protocol CardGamePlayer: Identifiable, Sendable where ID == UUID {
+@MainActor
+public protocol CardGamePlayer: Identifiable where ID == UUID {
     var name: String { get }
     var side: TeamSide { get }
     /// Cards currently in hand.

@@ -1,7 +1,8 @@
 import Foundation
 
 /// A single section of the round summary (e.g. a lance in Mus, a round in Truco).
-public protocol CardGameRoundResult: Sendable, Identifiable where ID == String {
+@MainActor
+public protocol CardGameRoundResult: Identifiable where ID == String {
     /// Name displayed in the summary row (e.g. "Grande", "Chica").
     var sectionName: String { get }
 

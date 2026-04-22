@@ -188,14 +188,22 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
 
     // MARK: - Player badge
 
+    private var badgeIconSize: CGFloat { max(12, cardWidth * 0.25) }
+    private var badgeCirclePad: CGFloat { max(3, cardWidth * 0.07) }
+    private var manoIconSize: CGFloat { max(7, cardWidth * 0.12) }
+    private var manoOffset: CGFloat { max(3, cardWidth * 0.07) }
+
+    @State private var pulseProgress: Double = 0
+
     private var playerBadge: some View {
         HStack(spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: player.avatarSystemImage)
-                    .font(.system(size: 14))
+                    .font(.system(size: badgeIconSize))
                     .foregroundStyle(.white)
-                    .padding(4)
+                    .padding(badgeCirclePad)
                     .background(Circle().fill(teamColor))
+                    // ── Countdown ring (existing) ─────────────────────────
                     .overlay {
                         CountdownRingView(
                             duration: timerDuration,
@@ -205,13 +213,28 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
                         )
                         .padding(-1)
                     }
+                    // ── Active player indicator ───────────────────────────
+                    .overlay {
+                        // Solid white border — always visible when active
+                        Circle()
+                            .stroke(Color.white, lineWidth: 2.5)
+                            .padding(-5)
+                            .opacity(isCurrent ? 1.0 : 0.0)
+                            .animation(.easeInOut(duration: 0.20), value: isCurrent)
+
+                        // Sonar pulse — expands and fades outward
+                        Circle()
+                            .stroke(Color.white.opacity((1 - pulseProgress) * 0.70), lineWidth: 2)
+                            .scaleEffect(1.0 + pulseProgress * 1.60)
+                            .padding(-5)
+                    }
                 if isMano {
                     Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: manoIconSize, weight: .bold))
                         .foregroundStyle(.black)
                         .padding(2)
                         .background(Circle().fill(Color.yellow))
-                        .offset(x: 4, y: -4)
+                        .offset(x: manoOffset, y: -manoOffset)
                 }
             }
             Text(player.name)
@@ -219,9 +242,28 @@ public struct PlayerSeatView<Player: CardGamePlayer>: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Capsule().fill(.black.opacity(0.55)))
+                .background(
+                    Capsule()
+                        .fill(isCurrent ? teamColor.opacity(0.85) : .black.opacity(0.55))
+                )
+                .animation(.easeInOut(duration: 0.20), value: isCurrent)
         }
         .scaleEffect(isCurrent ? 1.1 : 1.0)
         .animation(.spring(duration: 0.3), value: isCurrent)
+        .task(id: isCurrent) {
+            guard isCurrent else {
+                withAnimation(.none) { pulseProgress = 0.0 }
+                return
+            }
+            // Sonar sweep loop: expand ring from badge edge, fade to invisible, reset instantly
+            while !Task.isCancelled {
+                withAnimation(.easeOut(duration: 0.90)) { pulseProgress = 1.0 }
+                try? await Task.sleep(for: .seconds(1.20))
+                guard !Task.isCancelled else { break }
+                withAnimation(.none) { pulseProgress = 0.0 }
+                try? await Task.sleep(for: .seconds(0.05))
+            }
+            withAnimation(.none) { pulseProgress = 0.0 }
+        }
     }
 }

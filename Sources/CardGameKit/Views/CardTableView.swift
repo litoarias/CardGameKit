@@ -6,17 +6,22 @@ public struct CardTableView<Engine: CardGameEngine>: View {
     @State private var vm: CardTableViewModel<Engine>
     @Namespace private var dealNS
     @AppStorage("isPro") private var isPro = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var scoreboardScale: CGFloat { sizeClass == .regular ? 1.5 : 1.0 }
 
     public init(
-        engineFactory: @escaping @Sendable () -> Engine,
-        botDecider: @escaping @Sendable (Seat, Engine) async -> BotMove<Engine.Action>,
+        engineFactory: @escaping @MainActor () -> Engine,
+        botDecider: @escaping @MainActor (Seat, Engine) async -> BotMove<Engine.Action>,
         humanName: String = "Jugador",
-        bubbleProvider: (@Sendable (Seat, Engine) -> String?)? = nil
+        turnTimerDuration: TimeInterval = 10,
+        bubbleProvider: (@MainActor (Seat, Engine) -> String?)? = nil
     ) {
         _vm = State(initialValue: CardTableViewModel(
             engineFactory: engineFactory,
             botDecider: botDecider,
             humanName: humanName,
+            turnTimerDuration: turnTimerDuration,
             bubbleProvider: bubbleProvider
         ))
     }
@@ -29,15 +34,23 @@ public struct CardTableView<Engine: CardGameEngine>: View {
             let h = geo.size.height + (isPro ? safeBottom : 0) - bannerH
             let botCardW = w * 0.144
             let humanCardW = w * 0.216
+            // Scoreboard adaptive height
+            let sbHalfH: CGFloat = 19 * scoreboardScale
+            let scoreboardY: CGFloat = sbHalfH + 4
+            let scoreboardBottom: CGFloat = sbHalfH * 2 + 4
+            // Top seat: below scoreboard with gap
+            let topSeatY = topSeatCenter(h: h, botCardW: botCardW, scoreboardBottom: scoreboardBottom)
+            // Left/right seats: high enough to leave air above human hand
+            let leftRightY = min(h * 0.43, h * 0.73 - humanCardW * 0.85 - botCardW * 1.3 - 24)
+            // Human badge: just below the card fan
+            let humanBadgeY = max(h * 0.74, min(h * 0.90, h * 0.73 + humanCardW * 0.85 + 20))
+            // Action bar: near the bottom of usable area
+            let actionBarY = h - 28
 
             ZStack {
                 // Green felt background
-                LinearGradient(
-                    colors: [Color(red: 0.07, green: 0.42, blue: 0.22),
-                             Color(red: 0.03, green: 0.28, blue: 0.14)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .ignoresSafeArea()
+                tableBackground
+                    .ignoresSafeArea()
 
                 // Scoreboard (top center)
                 ScoreboardView(
@@ -48,19 +61,19 @@ public struct CardTableView<Engine: CardGameEngine>: View {
                     phaseLabel: vm.engine.phase.displayName
                 )
                 .frame(width: w * 0.9)
-                .position(x: w / 2, y: h * 0.04)
+                .position(x: w / 2, y: scoreboardY)
 
                 // Partner (top)
                 seatView(.top, cardW: botCardW, tableSize: geo.size)
-                    .position(x: w / 2, y: h * 0.13)
+                    .position(x: w / 2, y: topSeatY)
 
                 // Left bot
                 seatView(.left, cardW: botCardW, tableSize: geo.size)
-                    .position(x: w * 0.17, y: h * 0.43)
+                    .position(x: w * 0.17, y: leftRightY)
 
                 // Right bot
                 seatView(.right, cardW: botCardW, tableSize: geo.size)
-                    .position(x: w * 0.83, y: h * 0.43)
+                    .position(x: w * 0.83, y: leftRightY)
 
                 // Deck pile (center during deal, settles to mano corner)
                 let mano = vm.engine.manoSeat
@@ -71,7 +84,7 @@ public struct CardTableView<Engine: CardGameEngine>: View {
                     .rotationEffect(.degrees(vm.deckSettled ? vm.deckRotation : -4))
                     .position(vm.deckSettled ? settledPos : CGPoint(x: w / 2, y: h * 0.45))
                     .animation(.spring(duration: 0.7, bounce: 0.15), value: vm.deckSettled)
-                    .animation(.spring(duration: 0.5), value: mano)
+                    .animation(.spring(duration: 0.7, bounce: 0.15), value: mano.rawValue)
 
                 // Particles
                 ParticleLayer(particles: vm.particles)
@@ -85,13 +98,13 @@ public struct CardTableView<Engine: CardGameEngine>: View {
                     .position(x: w / 2, y: h * 0.73)
 
                 // Human badge
-                humanBadge
-                    .position(x: w / 2, y: h * 0.84)
+                humanBadge(cardW: humanCardW)
+                    .position(x: w / 2, y: humanBadgeY)
 
                 // Action buttons
                 ActionBarView(vm: vm)
                     .frame(width: w * 0.9)
-                    .position(x: w / 2, y: h * 0.93)
+                    .position(x: w / 2, y: actionBarY)
 
                 // Ad banner
                 if !isPro {
@@ -120,10 +133,6 @@ public struct CardTableView<Engine: CardGameEngine>: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .preferredColorScheme(.dark)
-        #if os(iOS)
-        .statusBarHidden()
-        .persistentSystemOverlays(.hidden)
-        #endif
         .task {
             await vm.animateDeal()
             await vm.driveLoop()
@@ -177,7 +186,7 @@ public struct CardTableView<Engine: CardGameEngine>: View {
             seatDealOffset: seatDealOffset(seat),
             deckOffset: deckOffset(for: seat, size: tableSize),
             timerActive: vm.thinkingSeat == seat,
-            timerDuration: vm.botThinkDuration,
+            timerDuration: vm.turnTimerDuration,
             teamColor: teamColor
         )
     }
@@ -191,8 +200,7 @@ public struct CardTableView<Engine: CardGameEngine>: View {
         let offset = deckOffset(for: .bottom, size: tableSize)
 
         return ZStack {
-            ForEach(0..<count, id: \.self) { idx in
-                let card = cards[idx]
+            ForEach(Array(cards.enumerated()), id: \.element.id) { idx, card in
                 let angle = fanGeo.angle(at: idx, of: count)
                 let xOff = fanGeo.xOffset(at: idx, of: count, cardWidth: cardW)
                 let selected = vm.selectedDiscardIndices.contains(idx)
@@ -248,13 +256,17 @@ public struct CardTableView<Engine: CardGameEngine>: View {
 
     // MARK: - Human badge
 
-    private var humanBadge: some View {
-        HStack(spacing: 6) {
+    private func humanBadge(cardW: CGFloat) -> some View {
+        let iconSize = max(16, cardW * 0.24)
+        let circlePad = max(3, cardW * 0.05)
+        let manoIconSize = max(8, cardW * 0.10)
+        let manoOffset = max(4, cardW * 0.07)
+        return HStack(spacing: 6) {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 20))
+                    .font(.system(size: iconSize))
                     .foregroundStyle(.white)
-                    .padding(4)
+                    .padding(circlePad)
                     .background(Circle().fill(.blue))
                     .overlay {
                         CountdownRingView(
@@ -267,11 +279,11 @@ public struct CardTableView<Engine: CardGameEngine>: View {
                     }
                 if vm.engine.manoSeat == .bottom {
                     Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: manoIconSize, weight: .bold))
                         .foregroundStyle(.black)
                         .padding(2)
                         .background(Circle().fill(Color.yellow))
-                        .offset(x: 5, y: -5)
+                        .offset(x: manoOffset, y: -manoOffset)
                 }
             }
             Text(vm.humanName)
@@ -282,6 +294,14 @@ public struct CardTableView<Engine: CardGameEngine>: View {
     }
 
     // MARK: - Layout helpers
+
+    private var tableBackground: some View {
+        LinearGradient(
+            colors: [Color(red: 0.07, green: 0.42, blue: 0.22),
+                     Color(red: 0.03, green: 0.28, blue: 0.14)],
+            startPoint: .top, endPoint: .bottom
+        )
+    }
 
     private var shouldRevealCards: Bool {
         let kind = vm.engine.phase.kind
@@ -302,16 +322,30 @@ public struct CardTableView<Engine: CardGameEngine>: View {
     }
 
     private func deckOffset(for seat: Seat, size: CGSize) -> CGSize {
-        let w = size.width, h = size.height
+        let w = size.width
+        let bannerH: CGFloat = isPro ? 0 : 50
+        let h = size.height - bannerH
+        let sbHalfH: CGFloat = 19 * scoreboardScale
+        let sbBottom: CGFloat = sbHalfH * 2 + 4
+        let botCardW = w * 0.144
+        let humanCardW = w * 0.216
+        let lrY = min(h * 0.43, h * 0.73 - humanCardW * 0.85 - botCardW * 1.3 - 24)
         let deckCenter = CGPoint(x: w / 2, y: h * 0.45)
         let badge: CGFloat = 13
         let fanCenter: CGPoint = switch seat {
         case .bottom: CGPoint(x: w / 2, y: h * 0.73)
-        case .top:    CGPoint(x: w / 2, y: h * 0.13 + badge)
-        case .left:   CGPoint(x: w * 0.17, y: h * 0.43 - badge)
-        case .right:  CGPoint(x: w * 0.83, y: h * 0.43 - badge)
+        case .top:    CGPoint(x: w / 2, y: topSeatCenter(h: h, botCardW: botCardW, scoreboardBottom: sbBottom) + badge)
+        case .left:   CGPoint(x: w * 0.17, y: lrY - badge)
+        case .right:  CGPoint(x: w * 0.83, y: lrY - badge)
         }
         return CGSize(width: deckCenter.x - fanCenter.x, height: deckCenter.y - fanCenter.y)
+    }
+
+    /// Adaptive Y center for the top seat, ensuring it never overlaps the scoreboard.
+    private func topSeatCenter(h: CGFloat, botCardW: CGFloat, scoreboardBottom: CGFloat) -> CGFloat {
+        let badgeH = max(22, botCardW * 0.39)  // mirrors PlayerSeatView badge scaling
+        let seatHalfH = (badgeH + 4 + botCardW * 1.6) / 2
+        return max(h * 0.16, scoreboardBottom + 20 + seatHalfH)
     }
 
     private func seatDealOffset(_ seat: Seat) -> Int {

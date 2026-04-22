@@ -8,6 +8,9 @@ public struct ScoreboardView: View {
     let awayTeamName: String
     var phaseLabel: String = "JUEGO"
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var scale: CGFloat { sizeClass == .regular ? 1.5 : 1.0 }
+
     public init(
         scoreHome: Int,
         scoreAway: Int,
@@ -26,51 +29,51 @@ public struct ScoreboardView: View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text(homeTeamName)
-                    .font(.caption.bold())
+                    .font(.system(size: 12 * scale, weight: .bold))
                     .foregroundStyle(.white)
                 Spacer()
                 Text("\(scoreHome)")
-                    .font(.title3.bold())
-                    .foregroundStyle(.white)
+                    .font(.system(size: 20 * scale, weight: .bold))
                     .monospacedDigit()
+                    .foregroundStyle(.white)
                     .contentTransition(.numericText())
                     .animation(.spring(duration: 0.4), value: scoreHome)
             }
             .frame(maxWidth: .infinity)
-            .padding(.leading, 16)
+            .padding(.leading, 16 * scale)
 
             HStack(spacing: 6) {
                 Text("–")
-                    .font(.headline)
+                    .font(.system(size: 17 * scale, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.5))
                 Text(phaseLabel)
-                    .font(.caption2.bold())
+                    .font(.system(size: 11 * scale, weight: .bold))
                     .foregroundStyle(.black)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .padding(.horizontal, 8 * scale).padding(.vertical, 4 * scale)
                     .background(Capsule().fill(.yellow))
                     .animation(.easeInOut(duration: 0.3), value: phaseLabel)
                 Text("–")
-                    .font(.headline)
+                    .font(.system(size: 17 * scale, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.5))
             }
             .padding(.horizontal, 4)
 
             HStack(spacing: 6) {
                 Text("\(scoreAway)")
-                    .font(.title3.bold())
-                    .foregroundStyle(.white)
+                    .font(.system(size: 20 * scale, weight: .bold))
                     .monospacedDigit()
+                    .foregroundStyle(.white)
                     .contentTransition(.numericText())
                     .animation(.spring(duration: 0.4), value: scoreAway)
                 Spacer()
                 Text(awayTeamName)
-                    .font(.caption.bold())
+                    .font(.system(size: 12 * scale, weight: .bold))
                     .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity)
-            .padding(.trailing, 16)
+            .padding(.trailing, 16 * scale)
         }
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.45)))
+        .padding(.vertical, 8 * scale)
+        .background(RoundedRectangle(cornerRadius: max(8, 12 * scale)).fill(.black.opacity(0.45)))
     }
 }

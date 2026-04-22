@@ -1,7 +1,8 @@
 import Foundation
 
 /// A game phase as seen by the visual layer.
-public protocol CardGamePhase: Sendable, Equatable {
+@MainActor
+public protocol CardGamePhase: Equatable {
     /// What kind of UI interaction this phase requires.
     var kind: PhaseKind { get }
 

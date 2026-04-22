@@ -16,7 +16,6 @@ public struct CountdownRingView: View {
     }
 
     @State private var progress: Double = 1.0
-    @State private var timerTask: Task<Void, Never>?
 
     public var body: some View {
         Circle()
@@ -27,18 +26,21 @@ public struct CountdownRingView: View {
             )
             .rotationEffect(.degrees(-90))
             .animation(.linear(duration: 0.1), value: progress)
-            .onChange(of: isActive) { _, active in
-                if active {
-                    startCountdown()
+            .task(id: isActive) {
+                if isActive {
+                    progress = 1.0
+                    let steps = Int(duration * 10)
+                    for step in 1...steps {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if Task.isCancelled { return }
+                        progress = 1.0 - Double(step) / Double(steps)
+                    }
+                    progress = 0
                 } else {
-                    stopCountdown()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        progress = 1.0
+                    }
                 }
-            }
-            .onAppear {
-                if isActive { startCountdown() }
-            }
-            .onDisappear {
-                timerTask?.cancel()
             }
     }
 
@@ -58,27 +60,6 @@ public struct CountdownRingView: View {
             return [.yellow, .orange]
         } else {
             return [.orange, .red]
-        }
-    }
-
-    private func startCountdown() {
-        timerTask?.cancel()
-        progress = 1.0
-        let steps = Int(duration * 10)
-        timerTask = Task { @MainActor in
-            for step in 1...steps {
-                try? await Task.sleep(for: .milliseconds(100))
-                if Task.isCancelled { return }
-                progress = 1.0 - Double(step) / Double(steps)
-            }
-            progress = 0
-        }
-    }
-
-    private func stopCountdown() {
-        timerTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
-            progress = 1.0
         }
     }
 }

@@ -30,6 +30,8 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     }
 
     @State private var appeared = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var scale: CGFloat { sizeClass == .regular ? 1.4 : 1.0 }
 
     private var totalHome: Int {
         results.filter { $0.winner == .home }.reduce(0) { acc, r in acc + r.totalPoints }
@@ -52,6 +54,7 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
                 continueButton
             }
             .background(cardBackground)
+            .frame(maxWidth: 600)
             .padding(.horizontal, 28)
             .scaleEffect(appeared ? 1 : 0.93)
             .opacity(appeared ? 1 : 0)
@@ -65,13 +68,13 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     private var headerSection: some View {
         HStack {
             Text("Fin de Mano")
-                .font(.title3.bold())
+                .font(.system(size: 20 * scale, weight: .bold))
                 .foregroundStyle(.white)
             Spacer()
             handWinnerBadge
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 20 * scale)
+        .padding(.vertical, 16 * scale)
     }
 
     @ViewBuilder
@@ -85,11 +88,11 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
 
     private func winnerBadge(name: String, color: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: "crown.fill").font(.caption2)
-            Text(name).font(.caption.bold())
+            Image(systemName: "crown.fill").font(.system(size: 11 * scale))
+            Text(name).font(.system(size: 12 * scale, weight: .bold))
         }
         .foregroundStyle(color)
-        .padding(.horizontal, 10).padding(.vertical, 5)
+        .padding(.horizontal, 10 * scale).padding(.vertical, 5 * scale)
         .background(Capsule().fill(color.opacity(0.18)))
     }
 
@@ -102,7 +105,8 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
                 ResultSummaryRow(
                     result: result,
                     homeTeamName: homeTeamName,
-                    awayTeamName: awayTeamName
+                    awayTeamName: awayTeamName,
+                    scale: scale
                 )
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
@@ -111,7 +115,7 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
                     value: appeared
                 )
                 if idx < results.count - 1 {
-                    Divider().overlay(.white.opacity(0.07)).padding(.horizontal, 20)
+                    Divider().overlay(.white.opacity(0.07)).padding(.horizontal, 20 * scale)
                 }
             }
         }
@@ -121,23 +125,23 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     // MARK: - Totals + score progress
 
     private var totalsSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 12 * scale) {
             HStack(spacing: 0) {
                 teamPointsView(name: homeTeamName, points: totalHome,
                                isWinner: totalHome > totalAway, color: .blue)
                 Spacer()
                 Text("esta mano")
-                    .font(.caption2).foregroundStyle(.white.opacity(0.30))
+                    .font(.system(size: 11 * scale)).foregroundStyle(.white.opacity(0.30))
                 Spacer()
                 teamPointsView(name: awayTeamName, points: totalAway,
                                isWinner: totalAway > totalHome, color: .orange)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 24 * scale)
 
             scoreProgressSection
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 20 * scale)
         }
-        .padding(.vertical, 14)
+        .padding(.vertical, 14 * scale)
         .opacity(appeared ? 1 : 0)
         .animation(
             .spring(duration: 0.38).delay(Double(results.count) * 0.07 + 0.15),
@@ -147,9 +151,9 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
 
     private func teamPointsView(name: String, points: Int, isWinner: Bool, color: Color) -> some View {
         VStack(spacing: 3) {
-            Text(name).font(.caption2).foregroundStyle(color.opacity(0.75))
+            Text(name).font(.system(size: 11 * scale)).foregroundStyle(color.opacity(0.75))
             Text("+\(points)")
-                .font(.title2.bold())
+                .font(.system(size: 22 * scale, weight: .bold))
                 .foregroundStyle(isWinner && points > 0 ? color : .white.opacity(0.45))
         }
     }
@@ -165,8 +169,8 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
         let fraction = min(Double(score) / Double(winningScore), 1.0)
         return HStack(spacing: 8) {
             Text(name)
-                .font(.caption2.bold()).foregroundStyle(color)
-                .frame(width: 56, alignment: .leading)
+                .font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(color)
+                .frame(width: 56 * scale, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.08))
@@ -175,10 +179,10 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
                         .animation(.spring(duration: 0.6).delay(0.15), value: fraction)
                 }
             }
-            .frame(height: 5)
+            .frame(height: 5 * scale)
             Text("\(score)/\(winningScore)")
-                .font(.caption2).foregroundStyle(.white.opacity(0.50))
-                .frame(width: 40, alignment: .trailing)
+                .font(.system(size: 11 * scale)).foregroundStyle(.white.opacity(0.50))
+                .frame(width: 40 * scale, alignment: .trailing)
         }
     }
 
@@ -187,12 +191,12 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     private var continueButton: some View {
         Button(action: onContinue) {
             Text("Continuar")
-                .font(.headline).foregroundStyle(.black)
-                .frame(maxWidth: .infinity).padding(.vertical, 14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(.white))
+                .font(.system(size: 17 * scale, weight: .semibold)).foregroundStyle(.black)
+                .frame(maxWidth: .infinity).padding(.vertical, 14 * scale)
+                .background(RoundedRectangle(cornerRadius: 14 * scale).fill(.white))
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 20).padding(.vertical, 16)
+        .padding(.horizontal, 20 * scale).padding(.vertical, 16 * scale)
         .opacity(appeared ? 1 : 0)
         .animation(
             .easeIn(duration: 0.25).delay(Double(results.count) * 0.07 + 0.28),
@@ -201,9 +205,9 @@ public struct RoundSummaryView<Result: CardGameRoundResult>: View {
     }
 
     private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 24)
+        RoundedRectangle(cornerRadius: 24 * scale)
             .fill(Color(red: 0.04, green: 0.20, blue: 0.12))
-            .overlay(RoundedRectangle(cornerRadius: 24)
+            .overlay(RoundedRectangle(cornerRadius: 24 * scale)
                 .strokeBorder(.white.opacity(0.10), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.55), radius: 40, y: 10)
     }
@@ -215,6 +219,7 @@ private struct ResultSummaryRow<Result: CardGameRoundResult>: View {
     let result: Result
     let homeTeamName: String
     let awayTeamName: String
+    let scale: CGFloat
 
     private var winnerName: String { result.winner == .home ? homeTeamName : awayTeamName }
     private var winnerColor: Color { result.winner == .home ? .blue : .orange }
@@ -223,7 +228,7 @@ private struct ResultSummaryRow<Result: CardGameRoundResult>: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(result.sectionName)
-                    .font(.subheadline.bold()).foregroundStyle(.white)
+                    .font(.system(size: 15 * scale, weight: .bold)).foregroundStyle(.white)
 
                 HStack(spacing: 4) {
                     if result.mainPoints > 0 {
@@ -240,8 +245,8 @@ private struct ResultSummaryRow<Result: CardGameRoundResult>: View {
                 Spacer()
 
                 HStack(spacing: 5) {
-                    Circle().fill(winnerColor).frame(width: 7, height: 7)
-                    Text(winnerName).font(.caption.bold()).foregroundStyle(winnerColor)
+                    Circle().fill(winnerColor).frame(width: 7 * scale, height: 7 * scale)
+                    Text(winnerName).font(.system(size: 12 * scale, weight: .bold)).foregroundStyle(winnerColor)
                     Group {
                         if result.totalPoints > 0 {
                             Text("\(result.totalPoints)pt")
@@ -249,17 +254,17 @@ private struct ResultSummaryRow<Result: CardGameRoundResult>: View {
                             Text("—").foregroundStyle(.white.opacity(0.35))
                         }
                     }
-                    .font(.subheadline.bold()).foregroundStyle(.white)
+                    .font(.system(size: 15 * scale, weight: .bold)).foregroundStyle(.white)
                 }
             }
         }
-        .padding(.horizontal, 20).padding(.vertical, 11)
+        .padding(.horizontal, 20 * scale).padding(.vertical, 11 * scale)
     }
 
     private func pointTag(label: String, value: Int, color: Color) -> some View {
         Text("\(label) \(value)")
-            .font(.caption2.bold()).foregroundStyle(color)
-            .padding(.horizontal, 5).padding(.vertical, 2)
+            .font(.system(size: 11 * scale, weight: .bold)).foregroundStyle(color)
+            .padding(.horizontal, 5 * scale).padding(.vertical, 2 * scale)
             .background(Capsule().fill(color.opacity(0.15)))
     }
 }

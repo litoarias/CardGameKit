@@ -20,6 +20,10 @@ public struct SpanishCardImage: View {
             .interpolation(.high)
             .aspectRatio(2.0 / 3.0, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(.white.opacity(0.35), lineWidth: 0.75)
+            }
             .shadow(color: .black.opacity(0.5), radius: 3, x: 1, y: 2)
     }
 }

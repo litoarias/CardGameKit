@@ -16,7 +16,8 @@ public struct ParticleLayer: View {
     private let wobbleAmplitude: Double = 0.6
 
     public var body: some View {
-        TimelineView(.animation) { tl in
+        guard !particles.isEmpty else { return AnyView(Color.clear.allowsHitTesting(false)) }
+        return AnyView(TimelineView(.animation) { tl in
             Canvas { ctx, size in
                 let now = tl.date.timeIntervalSinceReferenceDate
                 for p in particles {
@@ -49,7 +50,7 @@ public struct ParticleLayer: View {
                 }
             }
             .allowsHitTesting(false)
-        }
+        })
     }
 
     private func springScale(t: Double) -> Double {

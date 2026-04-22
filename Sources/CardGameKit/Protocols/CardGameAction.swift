@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// An action a player can execute, with all display metadata the UI needs.
-public protocol CardGameAction: Sendable, Equatable, Hashable {
+@MainActor
+public protocol CardGameAction: Equatable, Hashable {
     /// Label shown on the action button.
     var displayText: String { get }
 

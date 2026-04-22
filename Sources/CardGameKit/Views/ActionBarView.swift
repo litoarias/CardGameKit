@@ -41,6 +41,16 @@ public struct ActionBarView<Engine: CardGameEngine>: View {
                     }
                 }
 
+            case .handEnd:
+                HStack(spacing: 12) {
+                    actionButton("Ver resumen", color: .white.opacity(0.18)) {
+                        vm.mostrarResumen()
+                    }
+                    actionButton("Nueva mano", color: .green) {
+                        vm.continuarDesdeSummary()
+                    }
+                }
+
             case .gameOver:
                 HStack(spacing: 12) {
                     actionButton("Nueva partida", color: .green) {

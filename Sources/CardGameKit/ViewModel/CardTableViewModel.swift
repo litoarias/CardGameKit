@@ -11,10 +11,10 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     // MARK: - Engine + dependencies
 
     public private(set) var engine: Engine
-    private let botDecider: @Sendable (Seat, Engine) async -> BotMove<Engine.Action>
-    private let engineFactory: @Sendable () -> Engine
+    private let botDecider: @MainActor (Seat, Engine) async -> BotMove<Engine.Action>
+    private let engineFactory: @MainActor () -> Engine
     /// Optional provider for seat speech bubbles (game-specific announcements).
-    public let bubbleProvider: (@Sendable (Seat, Engine) -> String?)?
+    public let bubbleProvider: (@MainActor (Seat, Engine) -> String?)?
 
     // MARK: - Bot/thinking state
 
@@ -43,9 +43,13 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     // MARK: - Human timer
 
     public private(set) var humanTimerActive: Bool = false
-    public let turnTimerDuration: TimeInterval = 10
-    public let botThinkDuration: TimeInterval = 0.7
+    public let turnTimerDuration: TimeInterval
+    public let botThinkDuration: TimeInterval
     private var turnTimerTask: Task<Void, Never>?
+
+    // MARK: - Drive task (stored to allow cancellation)
+
+    private var driveTask: Task<Void, Never>?
 
     // MARK: - Human interaction state
 
@@ -63,15 +67,19 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     // MARK: - Init
 
     public init(
-        engineFactory: @escaping @Sendable () -> Engine,
-        botDecider: @escaping @Sendable (Seat, Engine) async -> BotMove<Engine.Action>,
+        engineFactory: @escaping @MainActor () -> Engine,
+        botDecider: @escaping @MainActor (Seat, Engine) async -> BotMove<Engine.Action>,
         humanName: String = "Jugador",
-        bubbleProvider: (@Sendable (Seat, Engine) -> String?)? = nil
+        turnTimerDuration: TimeInterval = 10,
+        botThinkDuration: TimeInterval = 0.7,
+        bubbleProvider: (@MainActor (Seat, Engine) -> String?)? = nil
     ) {
         self.engineFactory = engineFactory
         self.engine = engineFactory()
         self.botDecider = botDecider
         self.humanName = humanName
+        self.turnTimerDuration = turnTimerDuration
+        self.botThinkDuration = botThinkDuration
         self.bubbleProvider = bubbleProvider
     }
 
@@ -82,7 +90,7 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         stopHumanTimer()
         engine.executeDecision(seat: .bottom, agrees: agrees)
         animationTrigger += 1
-        Task { await driveLoop() }
+        scheduleDriveLoop()
     }
 
     public func humanConfirmDiscard() {
@@ -91,7 +99,7 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         guard !selectedDiscardIndices.isEmpty else { return }
         engine.executeDiscard(seat: .bottom, indices: selectedDiscardIndices)
         selectedDiscardIndices = []
-        Task { await driveLoop() }
+        scheduleDriveLoop()
     }
 
     public func humanExecute(_ action: Engine.Action) {
@@ -100,7 +108,11 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         engine.executeAction(action)
         animationTrigger += 1
         spawnParticleBurst(count: action.particleBurst)
-        Task { await driveLoop() }
+        scheduleDriveLoop()
+    }
+
+    public func mostrarResumen() {
+        showRoundSummary = true
     }
 
     public func continuarDesdeSummary() {
@@ -119,8 +131,20 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         dealRevealedCount = 0
         isDealing = true
         selectedDiscardIndices = []
-        Task { @MainActor in
+        driveTask?.cancel()
+        driveTask = Task { [weak self] in
+            guard let self else { return }
             await animateDeal()
+            await driveLoop()
+        }
+    }
+
+    // MARK: - Internal drive scheduling
+
+    private func scheduleDriveLoop() {
+        driveTask?.cancel()
+        driveTask = Task { [weak self] in
+            guard let self else { return }
             await driveLoop()
         }
     }
@@ -140,7 +164,6 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
                 summaryResults = engine.roundResults
                 summaryScoreHome = engine.scores[.home] ?? 0
                 summaryScoreAway = engine.scores[.away] ?? 0
-                showRoundSummary = true
                 await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
                     self.summaryContinuation = cont
                 }
@@ -157,13 +180,20 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
                 continue loop
 
             case .decision, .bet:
+                // Auto-advance phases with no interaction (e.g. skipped lance)
+                if engine.phaseRequiresAutoAdvance {
+                    try? await Task.sleep(for: .milliseconds(1200))
+                    engine.autoAdvancePhase()
+                    animationTrigger += 1
+                    continue loop
+                }
                 if isHumanTurn {
                     startHumanTimer()
                     break loop
                 }
                 isThinking = true
                 thinkingSeat = engine.turnSeat
-                try? await Task.sleep(for: .milliseconds(700))
+                try? await Task.sleep(for: .milliseconds(randomBotDelay(for: engine.phase.kind)))
                 await processBotTurn()
                 thinkingSeat = nil
                 isThinking = false
@@ -181,7 +211,7 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
             guard engine.pendingDiscardSeats.contains(seat) else { continue }
             isThinking = true
             thinkingSeat = seat
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: .milliseconds(randomBotDelay(for: .discard)))
             let move = await botDecider(seat, engine)
             let player = engine.player(at: seat)
             if case .discard(let indices) = move {
@@ -218,7 +248,8 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
     public func startHumanTimer() {
         stopHumanTimer()
         humanTimerActive = true
-        turnTimerTask = Task {
+        turnTimerTask = Task { [weak self] in
+            guard let self else { return }
             try? await Task.sleep(for: .seconds(turnTimerDuration))
             if Task.isCancelled { return }
             humanTimerActive = false
@@ -289,7 +320,9 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
         dealAnimationID += 1
         dealRevealedCount = 0
         isDealing = true
-        Task { @MainActor in
+        driveTask?.cancel()
+        driveTask = Task { [weak self] in
+            guard let self else { return }
             await animateDeal()
             await driveLoop()
         }
@@ -317,6 +350,25 @@ public final class CardTableViewModel<Engine: CardGameEngine> {
 
     private func clearParticles() {
         particles.removeAll()
+    }
+
+    // MARK: - Bot timing
+
+    /// Random thinking delay that varies by phase to feel human.
+    /// - Decision (mus/corto): quick read of situation, 0.5 – 1.4 s
+    /// - Bet: weighing risk and bluff, 0.9 – 2.6 s
+    /// - Discard: studying hand, 0.6 – 1.8 s
+    /// Occasionally a much longer "hesitation" pause occurs (~10 % of the time).
+    private func randomBotDelay(for phase: PhaseKind) -> Int {
+        let hesitate = Int.random(in: 1...10) == 1  // 10 % chance of a longer pause
+        switch phase {
+        case .decision:
+            return hesitate ? Int.random(in: 1800...3000) : Int.random(in: 500...1400)
+        case .bet:
+            return hesitate ? Int.random(in: 2600...4200) : Int.random(in: 900...2600)
+        default:  // discard, etc.
+            return hesitate ? Int.random(in: 1400...2400) : Int.random(in: 600...1800)
+        }
     }
 
     // MARK: - UI helpers

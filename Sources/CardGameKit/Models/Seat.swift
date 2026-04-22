@@ -6,6 +6,7 @@ import Foundation
 public enum Seat: Int, CaseIterable, Sendable, Hashable {
     case bottom = 0, left = 1, top = 2, right = 3
 
-    /// Next seat in turn order (clockwise from mano).
-    public var next: Seat { Seat(rawValue: (rawValue + 1) % 4)! }
+    /// Next seat in turn order: rotation to the right (bottom → right → top → left).
+    /// rawValue steps back by 1 mod 4: 0→3→2→1→0.
+    public var next: Seat { Seat(rawValue: (rawValue + 3) % 4)! }
 }

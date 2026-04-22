@@ -21,7 +21,8 @@ public enum PhaseKind: Sendable, Equatable {
 }
 
 /// Protocol for a card game engine that the visual layer can drive generically.
-public protocol CardGameEngine: Sendable {
+@MainActor
+public protocol CardGameEngine {
     associatedtype Phase: CardGamePhase
     associatedtype Action: CardGameAction
     associatedtype Result: CardGameRoundResult
@@ -58,4 +59,20 @@ public protocol CardGameEngine: Sendable {
     mutating func executeDiscard(seat: Seat, indices: Set<Int>)
     mutating func executeAction(_ action: Action)
     mutating func newHand()
+
+    // MARK: - Auto-advance (skipped phases)
+
+    /// True when the current phase has no interaction and should auto-advance
+    /// after a brief pause (e.g. a Mus lance where nobody has pares).
+    var phaseRequiresAutoAdvance: Bool { get }
+
+    /// Advance past the current auto-advance phase to the next one.
+    mutating func autoAdvancePhase()
+}
+
+// MARK: - Default implementations
+
+public extension CardGameEngine {
+    var phaseRequiresAutoAdvance: Bool { false }
+    mutating func autoAdvancePhase() {}
 }

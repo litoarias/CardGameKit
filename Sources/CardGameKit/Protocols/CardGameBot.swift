@@ -1,7 +1,7 @@
 import Foundation
 
 /// The move a bot returns for a given situation.
-public enum BotMove<Action: CardGameAction>: Sendable {
+public enum BotMove<Action: CardGameAction> {
     /// Yes/no decision phase.
     case decision(Bool)
     /// Select cards to discard (indices into the hand).
