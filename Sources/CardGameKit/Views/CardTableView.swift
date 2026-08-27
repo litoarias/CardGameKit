@@ -514,11 +514,13 @@ public struct CardTableView<Engine: CardGameEngine>: View {
     }
 
     private func deckSettledPosition(mano: Seat, w: CGFloat, h: CGFloat, humanHandY: CGFloat) -> CGPoint {
+        // Offset enough so ~half the deck is off-screen for a realistic "sitting in hand" look.
+        // Human deck is scaled to ~w*0.26, bot decks to ~w*0.17.
         switch mano {
-        case .bottom: return CGPoint(x: -w * 0.05, y: humanHandY)
-        case .top:    return CGPoint(x: w * 1.05,  y: h * 0.08)
-        case .left:   return CGPoint(x: -w * 0.05, y: h * 0.45)
-        case .right:  return CGPoint(x: w * 1.05,  y: h * 0.45)
+        case .bottom: return CGPoint(x: -w * 0.13, y: humanHandY)
+        case .top:    return CGPoint(x: w * 1.13,  y: h * 0.08)
+        case .left:   return CGPoint(x: -w * 0.09, y: h * 0.45)
+        case .right:  return CGPoint(x: w * 1.09,  y: h * 0.45)
         }
     }
 
